@@ -1,0 +1,23 @@
+{
+  "fallback_order": ["gemini", "openrouter", "groq"],
+  "providers": {
+    "gemini": {
+      "enabled": true,
+      "model": "gemini-2.5-flash-lite"
+    },
+    "openrouter": {
+      "enabled": true,
+      "model": "nex-agi/nex-n2-pro:free",
+      "site_url": "",
+      "app_name": "news-summary-mvp"
+    },
+    "groq": {
+      "enabled": true,
+      "model": "llama-3.3-70b-versatile"
+    }
+  },
+  "generation": {
+    "temperature": 0.2,
+    "max_tokens": 700
+  }
+}

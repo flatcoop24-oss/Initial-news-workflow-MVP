@@ -1,0 +1,66 @@
+name: News Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit_per_feed:
+        description: "RSS feed별 수집 기사 수"
+        required: false
+        default: "10"
+      summarize_limit:
+        description: "이번 실행에서 요약할 pending 기사 수"
+        required: false
+        default: "0"
+      report_items:
+        description: "리포트에 포함할 기사 수"
+        required: false
+        default: "50"
+      upload_to_notion:
+        description: "Notion 페이지로 리포트 업로드 여부"
+        required: false
+        default: "false"
+  schedule:
+    - cron: "0 22 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  collect-news:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run news workflow
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
+        run: |
+          NOTION_FLAG=""
+          if [ "${{ github.event.inputs.upload_to_notion || 'false' }}" = "true" ]; then
+            NOTION_FLAG="--upload-to-notion"
+          fi
+
+          python scripts/workflow.py \
+            --limit-per-feed "${{ github.event.inputs.limit_per_feed || '10' }}" \
+            --summarize-limit "${{ github.event.inputs.summarize_limit || '0' }}" \
+            --report-items "${{ github.event.inputs.report_items || '50' }}" \
+            $NOTION_FLAG
+
+      - name: Commit generated CSV and reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/news.csv reports/*.md
+          git diff --cached --quiet || git commit -m "Update news data and report"
+          git push

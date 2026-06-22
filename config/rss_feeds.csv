@@ -1,0 +1,5 @@
+source,keyword,url
+Google News,AI,https://news.google.com/rss/search?q=AI&hl=ko&gl=KR&ceid=KR:ko
+Google News,반도체,https://news.google.com/rss/search?q=%EB%B0%98%EB%8F%84%EC%B2%B4&hl=ko&gl=KR&ceid=KR:ko
+Google News,스타트업,https://news.google.com/rss/search?q=%EC%8A%A4%ED%83%80%ED%8A%B8%EC%97%85&hl=ko&gl=KR&ceid=KR:ko
+Google News,금리,https://news.google.com/rss/search?q=%EA%B8%88%EB%A6%AC&hl=ko&gl=KR&ceid=KR:ko
