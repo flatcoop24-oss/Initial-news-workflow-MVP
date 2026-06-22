@@ -9,8 +9,9 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_DIR = ROOT_DIR / "reports"
-DEFAULT_NOTION_VERSION = "2026-03-11"
+DEFAULT_NOTION_VERSION = "2022-06-28"
 RICH_TEXT_LIMIT = 1900
+MAX_BLOCKS_PER_PAGE = 90
 
 
 class NotionError(Exception):
@@ -49,7 +50,7 @@ def create_notion_page_from_markdown(
                 "title": [{"text": {"content": title}}],
             }
         },
-        "markdown": markdown,
+        "children": markdown_to_notion_blocks(markdown)[:MAX_BLOCKS_PER_PAGE],
     }
 
     return post_notion_json("/v1/pages", payload, api_key=api_key, notion_version=notion_version)
@@ -103,6 +104,77 @@ def upload_rows_to_database(rows, database_id=None, api_key=None, notion_version
         responses.append(post_notion_json("/v1/pages", payload, api_key=api_key, notion_version=notion_version))
 
     return responses
+
+
+def markdown_to_notion_blocks(markdown):
+    """
+    간단한 Markdown 리포트를 Notion block 리스트로 변환합니다.
+
+    지원 형식:
+    - # 제목
+    - ## 소제목
+    - - 불릿
+    - 일반 문단
+
+    Args:
+        markdown: Markdown 문자열입니다.
+
+    Returns:
+        Notion block 딕셔너리 리스트입니다.
+    """
+    blocks = []
+
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if line.startswith("# "):
+            blocks.append(text_block("heading_1", line[2:].strip()))
+        elif line.startswith("## "):
+            blocks.append(text_block("heading_2", line[3:].strip()))
+        elif line.startswith("- "):
+            blocks.append(text_block("bulleted_list_item", strip_markdown_link(line[2:].strip())))
+        else:
+            blocks.append(text_block("paragraph", strip_markdown_link(line)))
+
+    return blocks or [text_block("paragraph", "리포트 내용이 없습니다.")]
+
+
+def text_block(block_type, text):
+    """
+    Notion 텍스트 block을 생성합니다.
+
+    Args:
+        block_type: paragraph, heading_1, heading_2, bulleted_list_item 중 하나입니다.
+        text: block에 넣을 텍스트입니다.
+
+    Returns:
+        Notion block 딕셔너리입니다.
+    """
+    return {
+        "object": "block",
+        "type": block_type,
+        block_type: {
+            "rich_text": [{"type": "text", "text": {"content": truncate_text(text, RICH_TEXT_LIMIT)}}],
+        },
+    }
+
+
+def strip_markdown_link(text):
+    """
+    Markdown 링크 문법을 Notion에 안전한 일반 텍스트로 단순화합니다.
+
+    Args:
+        text: 원본 문자열입니다.
+
+    Returns:
+        링크 문법이 단순화된 문자열입니다.
+    """
+    # [title](url) -> title (url)
+    import re
+
+    return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
 
 
 def build_database_page_payload(row, database_id):

@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.notion_exporter import build_database_page_payload, create_notion_page_from_markdown, upload_report_file, upload_rows_to_database
+from scripts.notion_exporter import (
+    build_database_page_payload,
+    create_notion_page_from_markdown,
+    markdown_to_notion_blocks,
+    upload_report_file,
+    upload_rows_to_database,
+)
 
 
 class NotionExporterTest(unittest.TestCase):
@@ -23,7 +29,7 @@ class NotionExporterTest(unittest.TestCase):
         self.assertEqual(path, "/v1/pages")
         self.assertEqual(payload["parent"]["page_id"], "parent-id")
         self.assertEqual(payload["properties"]["title"]["title"][0]["text"]["content"], "테스트 리포트")
-        self.assertEqual(payload["markdown"], "# 리포트\n\n내용")
+        self.assertEqual(payload["children"][0]["type"], "heading_1")
 
     def test_upload_report_file_uses_file_content(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -67,6 +73,14 @@ class NotionExporterTest(unittest.TestCase):
 
         self.assertEqual(responses[0]["id"], "page-id")
         self.assertEqual(post_json.call_count, 1)
+
+    def test_markdown_to_notion_blocks(self):
+        blocks = markdown_to_notion_blocks("# 제목\n\n## AI\n\n- [기사](https://example.com)\n본문")
+
+        self.assertEqual(blocks[0]["type"], "heading_1")
+        self.assertEqual(blocks[1]["type"], "heading_2")
+        self.assertEqual(blocks[2]["type"], "bulleted_list_item")
+        self.assertIn("https://example.com", blocks[2]["bulleted_list_item"]["rich_text"][0]["text"]["content"])
 
 
 if __name__ == "__main__":
