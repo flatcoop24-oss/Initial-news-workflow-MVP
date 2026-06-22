@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_DIR = ROOT_DIR / "reports"
 DEFAULT_NOTION_VERSION = "2026-03-11"
+RICH_TEXT_LIMIT = 1900
 
 
 class NotionError(Exception):
@@ -76,6 +77,142 @@ def upload_report_file(report_path, title=None, parent_page_id=None, api_key=Non
         parent_page_id=parent_page_id,
         api_key=api_key,
     )
+
+
+def upload_rows_to_database(rows, database_id=None, api_key=None, notion_version=None, limit=50):
+    """
+    뉴스 row 목록을 Notion 데이터베이스에 기사별 페이지로 업로드합니다.
+
+    Args:
+        rows: news.csv row 딕셔너리 리스트입니다.
+        database_id: Notion database ID입니다.
+        api_key: Notion integration secret입니다.
+        notion_version: Notion API version입니다.
+        limit: 업로드할 최대 row 수입니다.
+
+    Returns:
+        생성된 Notion page 응답 리스트입니다.
+    """
+    api_key = api_key or require_env("NOTION_API_KEY")
+    database_id = database_id or require_env("NOTION_DATABASE_ID")
+    notion_version = notion_version or os.getenv("NOTION_VERSION", DEFAULT_NOTION_VERSION)
+    responses = []
+
+    for row in rows[:limit]:
+        payload = build_database_page_payload(row, database_id)
+        responses.append(post_notion_json("/v1/pages", payload, api_key=api_key, notion_version=notion_version))
+
+    return responses
+
+
+def build_database_page_payload(row, database_id):
+    """
+    news.csv row를 Notion database page 생성 payload로 변환합니다.
+
+    Notion 데이터베이스에는 아래 속성이 있어야 합니다.
+    - 제목: Title
+    - 날짜: Date
+    - 키워드: Select
+    - 출처: Rich text
+    - URL: URL
+    - 상태: Select
+    - 요약: Rich text
+    - 카테고리: Select
+    - 중요도: Number
+    - 원문: Rich text
+
+    Args:
+        row: news.csv row 딕셔너리입니다.
+        database_id: Notion database ID입니다.
+
+    Returns:
+        Notion API page creation payload입니다.
+    """
+    title = row.get("title") or "(제목 없음)"
+    summary = row.get("summary") or row.get("content") or ""
+    importance = parse_number(row.get("importance"))
+
+    properties = {
+        "제목": {"title": [{"text": {"content": truncate_text(title, RICH_TEXT_LIMIT)}}]},
+        "키워드": select_property(row.get("keyword")),
+        "출처": rich_text_property(row.get("source")),
+        "URL": {"url": row.get("url") or None},
+        "상태": select_property(row.get("llm_status") or "pending"),
+        "요약": rich_text_property(summary),
+        "카테고리": select_property(row.get("category")),
+        "원문": rich_text_property(row.get("content")),
+    }
+
+    if row.get("published_at"):
+        properties["날짜"] = {"date": {"start": row.get("published_at")}}
+    if importance is not None:
+        properties["중요도"] = {"number": importance}
+
+    return {
+        "parent": {"database_id": database_id},
+        "properties": properties,
+    }
+
+
+def rich_text_property(value):
+    """
+    문자열을 Notion rich_text 속성으로 변환합니다.
+
+    Args:
+        value: 원본 문자열입니다.
+
+    Returns:
+        Notion rich_text property 딕셔너리입니다.
+    """
+    text = truncate_text(value or "", RICH_TEXT_LIMIT)
+    return {"rich_text": [{"text": {"content": text}}]} if text else {"rich_text": []}
+
+
+def select_property(value):
+    """
+    문자열을 Notion select 속성으로 변환합니다.
+
+    Args:
+        value: select 이름입니다.
+
+    Returns:
+        Notion select property 딕셔너리입니다.
+    """
+    value = (value or "").strip()
+    return {"select": {"name": value}} if value else {"select": None}
+
+
+def parse_number(value):
+    """
+    문자열 숫자를 float으로 변환합니다.
+
+    Args:
+        value: 숫자 또는 문자열입니다.
+
+    Returns:
+        float 또는 None입니다.
+    """
+    if value in ("", None):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def truncate_text(value, limit):
+    """
+    Notion API 제한을 피하기 위해 텍스트를 자릅니다.
+
+    Args:
+        value: 원본 문자열입니다.
+        limit: 최대 길이입니다.
+
+    Returns:
+        잘린 문자열입니다.
+    """
+    value = str(value or "")
+    return value[:limit]
 
 
 def post_notion_json(path, payload, api_key, notion_version=DEFAULT_NOTION_VERSION):

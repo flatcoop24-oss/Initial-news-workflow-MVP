@@ -34,6 +34,7 @@ export OPENROUTER_API_KEY="..."
 export GROQ_API_KEY="..."
 export NOTION_API_KEY="..."
 export NOTION_PARENT_PAGE_ID="..."
+export NOTION_DATABASE_ID="..."
 ```
 
 Groq API는 무료 사용 가능 여부가 계정/크레딧 상태에 따라 달라질 수 있습니다.
@@ -95,6 +96,12 @@ Notion 페이지 업로드까지 실행:
 python scripts/workflow.py --limit-per-feed 10 --summarize-limit 0 --report-items 50 --upload-to-notion
 ```
 
+Notion 데이터베이스에 기사별로 업로드:
+
+```bash
+python scripts/workflow.py --limit-per-feed 10 --summarize-limit 0 --report-items 50 --upload-to-notion-db
+```
+
 결과 파일:
 
 ```text
@@ -133,8 +140,26 @@ GitHub Secrets에 아래 값을 추가합니다.
 ```text
 NOTION_API_KEY
 NOTION_PARENT_PAGE_ID
+NOTION_DATABASE_ID
 ```
 
 Notion에서 integration을 만든 뒤, 리포트를 생성할 상위 페이지에 해당 integration을 초대해야 합니다.
 
 수동 실행 시 `upload_to_notion` 값을 `true`로 설정하면 Markdown 리포트를 Notion 페이지로 업로드합니다.
+
+기사별 데이터베이스 업로드를 쓰려면 `upload_to_notion_db` 값을 `true`로 설정합니다.
+
+Notion 데이터베이스에는 아래 속성을 만들어야 합니다.
+
+```text
+제목: Title
+날짜: Date
+키워드: Select
+출처: Text
+URL: URL
+상태: Select
+요약: Text
+카테고리: Select
+중요도: Number
+원문: Text
+```

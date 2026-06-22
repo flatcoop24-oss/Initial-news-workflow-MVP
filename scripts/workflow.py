@@ -10,7 +10,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from scripts.csv_pipeline import collect_articles, read_rows, summarize_pending_rows
-from scripts.notion_exporter import upload_report_file
+from scripts.notion_exporter import upload_report_file, upload_rows_to_database
 from scripts.report_generator import generate_markdown_report, save_markdown_report
 from scripts.rss_fetcher import DEFAULT_FEEDS_CSV_PATH, fetch_rss_articles, load_rss_feeds
 
@@ -27,6 +27,7 @@ def run_workflow(
     summarize_limit=0,
     report_items=50,
     upload_to_notion=False,
+    upload_to_notion_db=False,
 ):
     """
     뉴스 자동화 MVP 전체 워크플로우를 실행합니다.
@@ -39,6 +40,7 @@ def run_workflow(
         summarize_limit: 이번 실행에서 요약할 pending 기사 수입니다. 0이면 요약하지 않습니다.
         report_items: Markdown 리포트에 포함할 최대 기사 수입니다.
         upload_to_notion: True이면 생성된 Markdown 리포트를 Notion 페이지로 업로드합니다.
+        upload_to_notion_db: True이면 기사 row를 Notion 데이터베이스에 업로드합니다.
 
     Returns:
         실행 결과 요약 딕셔너리입니다.
@@ -55,6 +57,7 @@ def run_workflow(
     markdown = generate_markdown_report(rows, max_items=report_items)
     report_path = save_markdown_report(markdown, report_dir=report_dir)
     notion_page = None
+    notion_database_pages = []
 
     if upload_to_notion:
         notion_response = upload_report_file(report_path)
@@ -62,6 +65,13 @@ def run_workflow(
             "id": notion_response.get("id", ""),
             "url": notion_response.get("url", ""),
         }
+
+    if upload_to_notion_db:
+        notion_responses = upload_rows_to_database(rows, limit=report_items)
+        notion_database_pages = [
+            {"id": response.get("id", ""), "url": response.get("url", "")}
+            for response in notion_responses
+        ]
 
     collected_status = Counter(row.get("llm_status", "") for row in collected_rows)
     stored_status = Counter(row.get("llm_status", "") for row in rows)
@@ -76,6 +86,7 @@ def run_workflow(
         "csv_path": str(csv_path),
         "report_path": str(report_path),
         "notion_page": notion_page,
+        "notion_database_pages": notion_database_pages,
     }
 
 
@@ -88,6 +99,7 @@ def main():
     parser.add_argument("--summarize-limit", type=int, default=0)
     parser.add_argument("--report-items", type=int, default=50)
     parser.add_argument("--upload-to-notion", action="store_true")
+    parser.add_argument("--upload-to-notion-db", action="store_true")
     args = parser.parse_args()
 
     result = run_workflow(
@@ -98,6 +110,7 @@ def main():
         summarize_limit=args.summarize_limit,
         report_items=args.report_items,
         upload_to_notion=args.upload_to_notion,
+        upload_to_notion_db=args.upload_to_notion_db,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

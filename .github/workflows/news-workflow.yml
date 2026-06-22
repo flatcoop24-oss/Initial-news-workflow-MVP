@@ -19,6 +19,10 @@ on:
         description: "Notion 페이지로 리포트 업로드 여부"
         required: false
         default: "false"
+      upload_to_notion_db:
+        description: "Notion 데이터베이스로 기사별 업로드 여부"
+        required: false
+        default: "false"
   schedule:
     - cron: "0 22 * * *"
 
@@ -45,17 +49,23 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           NOTION_FLAG=""
           if [ "${{ github.event.inputs.upload_to_notion || 'false' }}" = "true" ]; then
             NOTION_FLAG="--upload-to-notion"
+          fi
+          NOTION_DB_FLAG=""
+          if [ "${{ github.event.inputs.upload_to_notion_db || 'false' }}" = "true" ]; then
+            NOTION_DB_FLAG="--upload-to-notion-db"
           fi
 
           python scripts/workflow.py \
             --limit-per-feed "${{ github.event.inputs.limit_per_feed || '10' }}" \
             --summarize-limit "${{ github.event.inputs.summarize_limit || '0' }}" \
             --report-items "${{ github.event.inputs.report_items || '50' }}" \
-            $NOTION_FLAG
+            $NOTION_FLAG \
+            $NOTION_DB_FLAG
 
       - name: Commit generated CSV and reports
         run: |
