@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -98,10 +99,16 @@ def upload_rows_to_database(rows, database_id=None, api_key=None, notion_version
     api_key = api_key or require_env("NOTION_API_KEY")
     database_id = database_id or require_env("NOTION_DATABASE_ID")
     notion_version = notion_version or os.getenv("NOTION_VERSION", DEFAULT_NOTION_VERSION)
+    database = get_notion_json(
+        f"/v1/databases/{urllib.parse.quote(database_id)}",
+        api_key=api_key,
+        notion_version=notion_version,
+    )
+    schema_properties = database.get("properties", {})
     responses = []
 
     for row in rows[:limit]:
-        payload = build_database_page_payload(row, database_id)
+        payload = build_database_page_payload(row, database_id, schema_properties=schema_properties)
         responses.append(post_notion_json("/v1/pages", payload, api_key=api_key, notion_version=notion_version))
 
     return responses
@@ -178,7 +185,7 @@ def strip_markdown_link(text):
     return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
 
 
-def build_database_page_payload(row, database_id):
+def build_database_page_payload(row, database_id, schema_properties=None):
     """
     news.csv row를 Notion database page 생성 payload로 변환합니다.
 
@@ -205,27 +212,144 @@ def build_database_page_payload(row, database_id):
     summary = row.get("summary") or row.get("content") or ""
     importance = parse_number(row.get("importance"))
 
-    properties = {
-        "제목": {"title": [{"text": {"content": truncate_text(title, RICH_TEXT_LIMIT)}}]},
-        "키워드": select_property(row.get("keyword")),
-        "출처": rich_text_property(row.get("source")),
-        "URL": {"url": row.get("url") or None},
-        "상태": select_property(row.get("llm_status") or "pending"),
-        "요약": rich_text_property(summary),
-        "카테고리": select_property(row.get("category")),
-        "원문": rich_text_property(row.get("content")),
-    }
+    if schema_properties:
+        properties = build_schema_aware_properties(
+            schema_properties=schema_properties,
+            title=title,
+            summary=summary,
+            importance=importance,
+            row=row,
+        )
+    else:
+        properties = {
+            "제목": {"title": [{"text": {"content": truncate_text(title, RICH_TEXT_LIMIT)}}]},
+            "키워드": select_property(row.get("keyword")),
+            "출처": rich_text_property(row.get("source")),
+            "URL": {"url": row.get("url") or None},
+            "상태": select_property(row.get("llm_status") or "pending"),
+            "요약": rich_text_property(summary),
+            "카테고리": select_property(row.get("category")),
+            "원문": rich_text_property(row.get("content")),
+        }
 
-    notion_date = normalize_notion_date(row.get("published_at"))
-    if notion_date:
-        properties["날짜"] = {"date": {"start": notion_date}}
-    if importance is not None:
-        properties["중요도"] = {"number": importance}
+        notion_date = normalize_notion_date(row.get("published_at"))
+        if notion_date:
+            properties["날짜"] = {"date": {"start": notion_date}}
+        if importance is not None:
+            properties["중요도"] = {"number": importance}
 
     return {
         "parent": {"database_id": database_id},
         "properties": properties,
     }
+
+
+def build_schema_aware_properties(schema_properties, title, summary, importance, row):
+    """
+    실제 Notion DB 속성 이름과 타입을 기준으로 page properties를 생성합니다.
+
+    Args:
+        schema_properties: Notion database properties 응답 딕셔너리입니다.
+        title: 기사 제목입니다.
+        summary: 기사 요약 또는 본문 일부입니다.
+        importance: 중요도 숫자 또는 None입니다.
+        row: news.csv row 딕셔너리입니다.
+
+    Returns:
+        Notion API page properties 딕셔너리입니다.
+    """
+    properties = {}
+
+    title_name = find_property_name(schema_properties, ["제목", "Name", "이름", "Title"], "title")
+    if not title_name:
+        raise NotionError("Notion database needs a title property such as 제목, Name, or 이름.")
+    properties[title_name] = {"title": [{"text": {"content": truncate_text(title, RICH_TEXT_LIMIT)}}]}
+
+    add_schema_property(properties, schema_properties, ["날짜", "Date", "게시일", "발행일"], row.get("published_at"), "date")
+    add_schema_property(properties, schema_properties, ["키워드", "Keyword", "keyword"], row.get("keyword"), "select")
+    add_schema_property(properties, schema_properties, ["출처", "Source", "source"], row.get("source"), "rich_text")
+    add_schema_property(properties, schema_properties, ["URL", "url", "링크"], row.get("url"), "url")
+    add_schema_property(properties, schema_properties, ["상태", "Status", "status"], row.get("llm_status") or "pending", "select")
+    add_schema_property(properties, schema_properties, ["요약", "Summary", "summary"], summary, "rich_text")
+    add_schema_property(properties, schema_properties, ["카테고리", "Category", "category"], row.get("category"), "select")
+    add_schema_property(properties, schema_properties, ["중요도", "Importance", "importance"], importance, "number")
+    add_schema_property(properties, schema_properties, ["원문", "본문", "Content", "content"], row.get("content"), "rich_text")
+
+    return properties
+
+
+def find_property_name(schema_properties, candidates, expected_type=None):
+    """
+    후보 이름 또는 타입을 기준으로 Notion DB 속성명을 찾습니다.
+
+    Args:
+        schema_properties: Notion database properties 응답 딕셔너리입니다.
+        candidates: 우선 탐색할 속성명 후보입니다.
+        expected_type: 기대하는 Notion 속성 타입입니다.
+
+    Returns:
+        매칭된 속성명 또는 None입니다.
+    """
+    for name in candidates:
+        if name in schema_properties:
+            return name
+
+    if expected_type:
+        for name, info in schema_properties.items():
+            if info.get("type") == expected_type:
+                return name
+
+    return None
+
+
+def add_schema_property(properties, schema_properties, candidates, value, preferred_type):
+    """
+    실제 DB에 존재하는 속성에만 값을 추가합니다.
+
+    Args:
+        properties: 생성 중인 Notion properties 딕셔너리입니다.
+        schema_properties: Notion database properties 응답 딕셔너리입니다.
+        candidates: 속성명 후보입니다.
+        value: 넣을 값입니다.
+        preferred_type: 값에 가장 적합한 Notion 속성 타입입니다.
+    """
+    name = find_property_name(schema_properties, candidates)
+    if not name:
+        return
+
+    notion_type = schema_properties.get(name, {}).get("type")
+    prop = property_for_type(value, notion_type or preferred_type)
+    if prop is not None:
+        properties[name] = prop
+
+
+def property_for_type(value, notion_type):
+    """
+    Notion 속성 타입에 맞는 property 값을 생성합니다.
+
+    Args:
+        value: 원본 값입니다.
+        notion_type: Notion 속성 타입입니다.
+
+    Returns:
+        Notion property 딕셔너리 또는 None입니다.
+    """
+    if notion_type == "date":
+        notion_date = normalize_notion_date(value)
+        return {"date": {"start": notion_date}} if notion_date else None
+    if notion_type == "select":
+        return select_property(value)
+    if notion_type == "rich_text":
+        return rich_text_property(value)
+    if notion_type == "url":
+        return {"url": value or None}
+    if notion_type == "number":
+        number = parse_number(value)
+        return {"number": number} if number is not None else None
+    if notion_type == "status":
+        value = (value or "").strip()
+        return {"status": {"name": value}} if value else None
+    return None
 
 
 def rich_text_property(value):
@@ -346,6 +470,38 @@ def post_notion_json(path, payload, api_key, notion_version=DEFAULT_NOTION_VERSI
     }
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise NotionError(f"Notion HTTP {exc.code}: {body[:1000]}") from exc
+    except urllib.error.URLError as exc:
+        raise NotionError(f"Notion network error: {exc}") from exc
+
+
+def get_notion_json(path, api_key, notion_version=DEFAULT_NOTION_VERSION):
+    """
+    Notion API에 JSON GET 요청을 보냅니다.
+
+    Args:
+        path: Notion API path입니다. 예: /v1/databases/{database_id}.
+        api_key: Notion integration secret입니다.
+        notion_version: Notion API version입니다.
+
+    Returns:
+        JSON 응답 딕셔너리입니다.
+
+    Raises:
+        NotionError: HTTP 오류 또는 네트워크 오류가 발생한 경우입니다.
+    """
+    url = f"https://api.notion.com{path}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Notion-Version": notion_version,
+    }
+    request = urllib.request.Request(url, headers=headers, method="GET")
 
     try:
         with urllib.request.urlopen(request, timeout=60) as response:

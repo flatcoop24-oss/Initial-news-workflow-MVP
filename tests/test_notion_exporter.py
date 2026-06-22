@@ -76,15 +76,48 @@ class NotionExporterTest(unittest.TestCase):
 
         self.assertEqual(payload["properties"]["날짜"]["date"]["start"], "2026-06-22T05:07:17+00:00")
 
+    def test_build_database_page_payload_uses_actual_database_schema(self):
+        row = {
+            "title": "AI 뉴스",
+            "published_at": "Mon, 22 Jun 2026 05:07:17 GMT",
+            "keyword": "AI",
+            "source": "테스트",
+            "url": "https://example.com",
+            "llm_status": "pending",
+            "summary": "요약",
+            "category": "기술",
+            "importance": "4",
+        }
+        schema = {
+            "Name": {"type": "title"},
+            "Date": {"type": "date"},
+            "Keyword": {"type": "rich_text"},
+            "Source": {"type": "rich_text"},
+            "URL": {"type": "url"},
+            "Status": {"type": "select"},
+            "Summary": {"type": "rich_text"},
+            "Importance": {"type": "number"},
+        }
+
+        payload = build_database_page_payload(row, "database-id", schema_properties=schema)
+
+        self.assertEqual(payload["properties"]["Name"]["title"][0]["text"]["content"], "AI 뉴스")
+        self.assertEqual(payload["properties"]["Date"]["date"]["start"], "2026-06-22T05:07:17+00:00")
+        self.assertEqual(payload["properties"]["Keyword"]["rich_text"][0]["text"]["content"], "AI")
+        self.assertEqual(payload["properties"]["Status"]["select"]["name"], "pending")
+        self.assertEqual(payload["properties"]["Importance"]["number"], 4.0)
+
     def test_normalize_notion_date_returns_none_for_invalid_date(self):
         self.assertIsNone(normalize_notion_date("not a date"))
 
     def test_upload_rows_to_database_posts_each_row(self):
         rows = [{"title": "AI 뉴스", "url": "https://example.com"}]
 
+        database = {"properties": {"제목": {"type": "title"}, "URL": {"type": "url"}}}
         with patch("scripts.notion_exporter.post_notion_json") as post_json:
             post_json.return_value = {"id": "page-id"}
-            responses = upload_rows_to_database(rows, database_id="database-id", api_key="secret")
+            with patch("scripts.notion_exporter.get_notion_json", return_value=database):
+                responses = upload_rows_to_database(rows, database_id="database-id", api_key="secret")
 
         self.assertEqual(responses[0]["id"], "page-id")
         self.assertEqual(post_json.call_count, 1)
