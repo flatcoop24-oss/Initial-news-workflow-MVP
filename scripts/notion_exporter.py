@@ -4,6 +4,7 @@ import os
 import urllib.error
 import urllib.request
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 
@@ -215,8 +216,9 @@ def build_database_page_payload(row, database_id):
         "원문": rich_text_property(row.get("content")),
     }
 
-    if row.get("published_at"):
-        properties["날짜"] = {"date": {"start": row.get("published_at")}}
+    notion_date = normalize_notion_date(row.get("published_at"))
+    if notion_date:
+        properties["날짜"] = {"date": {"start": notion_date}}
     if importance is not None:
         properties["중요도"] = {"number": importance}
 
@@ -270,6 +272,39 @@ def parse_number(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def normalize_notion_date(value):
+    """
+    RSS/ISO 날짜 문자열을 Notion Date 속성이 받을 수 있는 ISO 8601 문자열로 변환합니다.
+
+    Args:
+        value: 날짜 문자열입니다. 예: Mon, 22 Jun 2026 05:07:17 GMT 또는 2026-06-22.
+
+    Returns:
+        ISO 8601 날짜 문자열입니다. 변환할 수 없으면 None입니다.
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+
+    try:
+        if value.endswith("Z"):
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return value
+        datetime.fromisoformat(value)
+        return value
+    except ValueError:
+        pass
+
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+    if parsed is None:
+        return None
+    return parsed.isoformat()
 
 
 def truncate_text(value, limit):

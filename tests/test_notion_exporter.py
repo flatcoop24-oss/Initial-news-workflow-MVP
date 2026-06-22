@@ -7,6 +7,7 @@ from scripts.notion_exporter import (
     build_database_page_payload,
     create_notion_page_from_markdown,
     markdown_to_notion_blocks,
+    normalize_notion_date,
     upload_report_file,
     upload_rows_to_database,
 )
@@ -63,6 +64,20 @@ class NotionExporterTest(unittest.TestCase):
         self.assertEqual(payload["properties"]["제목"]["title"][0]["text"]["content"], "AI 뉴스")
         self.assertEqual(payload["properties"]["키워드"]["select"]["name"], "AI")
         self.assertEqual(payload["properties"]["중요도"]["number"], 4.0)
+
+    def test_build_database_page_payload_normalizes_rss_date(self):
+        row = {
+            "title": "AI 뉴스",
+            "published_at": "Mon, 22 Jun 2026 05:07:17 GMT",
+            "url": "https://example.com",
+        }
+
+        payload = build_database_page_payload(row, "database-id")
+
+        self.assertEqual(payload["properties"]["날짜"]["date"]["start"], "2026-06-22T05:07:17+00:00")
+
+    def test_normalize_notion_date_returns_none_for_invalid_date(self):
+        self.assertIsNone(normalize_notion_date("not a date"))
 
     def test_upload_rows_to_database_posts_each_row(self):
         rows = [{"title": "AI 뉴스", "url": "https://example.com"}]
